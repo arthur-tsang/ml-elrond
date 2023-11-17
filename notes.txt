@@ -1,0 +1,5 @@
+Temporary notes for myself.
+
+Job 9411929: first attempt at ResNet (might be very slow -- should try redoing the data loader completely)
+
+9900778 : Run `regress2`, the model trained on 100,000 images
