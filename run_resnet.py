@@ -9,7 +9,7 @@ from torch import nn, optim
 from torch.utils.data import Dataset, DataLoader, Subset
 
 # from resnet import ResNetEstimator
-from torchvision.models.resnet import resnet18
+from torchvision.models.resnet import resnet18, resnet34
 from torchvision.transforms.functional import pad
 
 import pickle
@@ -107,22 +107,29 @@ def custom_resnet18(n_out=2, pdrop=0):
     custom number of outputs and dropout
 
     """
+    return custom_resnet(resnet18, n_out, pdrop)
 
-    
-    model = resnet18(pretrained=True)
+def custom_resnet(resnet_type, n_out, pdrop):
+    if resnet_type == 'resnet18':
+        model = resnet18(pretrained=True)
+    elif resnet_type == 'resnet34':
+        model = resnet34(pretrained=True)
+    elif isinstance(resnet_type, str):
+        raise ValueError('ResNet type {} not recognized'.format(resnet_type))
+    else:
+        model = resnet_type(pretrained=True)
 
     ## We need to replace the last layer with a new linear layer that has the
     ## right number of output classes. Also, we're adding dropout to this last
     ## layer.
     num_features = model.fc.in_features
-    # model.fc = nn.Sequential(nn.Dropout(p=pdrop),
-    #                          nn.Linear(num_features, n_out))
     model.fc = nn.Linear(num_features, n_out)
 
     ## Then we add dropout to every ReLU within the resnet itself
     append_dropout(model, pdrop)
 
     return model
+    
 
 if __name__ == '__main__':
     # Train a ResNet model
@@ -134,10 +141,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # First will try as a regression problem. This means one output for each LOS component.
-    model = custom_resnet18(n_out=2, pdrop=args.pdrop)
+    # model = custom_resnet18(n_out=2, pdrop=args.pdrop)
+    model = custom_resnet(resnet34, 2, args.pdrop)
     
-    # data_dir, x_filenames, y_filenames, imgs_per_file, maxlen=np.inf, normalization='log10'
-    # data_dir = '/n/home13/atsang/elrond/analosis/analosis/results/datasets'
     data_dir = '/n/holyscratch01/dvorkin_lab/Users/atsang/elronddata/datasets'
     xtrain_filenames = ['mlfodder_{}_image_list.pickle'.format(i) for i in range(100)]
     ytrain_filenames = ['mlfodder_{}_input_kwargs.csv'.format(i) for i in range(100)]
@@ -149,7 +155,8 @@ if __name__ == '__main__':
 
     # regress1: 9 train files, 1 val
     # regress2: 100 train files, 1 val
-    mname = 'regress2'
+    # regress3: Switching from resnet18 to resnet34
+    mname = 'regress3'
     batch_size = args.batch
     num_workers = args.num_workers
     to_normalize = False
