@@ -22,11 +22,14 @@ import argparse
 
 class ResNetDataset(Dataset):
 
-    def __init__(self, data_dir, x_filenames, y_filenames, imgs_per_file, maxlen=np.inf, normalization='log10'):
+    """Dataset to feed data into ResNets: uses padding to 256x256."""
+    
+    def __init__(self, data_dir, x_filenames, y_filenames, imgs_per_file, maxlen=np.inf, normalization='log10', pad_size=None):
         assert isinstance(imgs_per_file, int)
         assert maxlen == np.inf or isinstance(maxlen, int)
         assert normalization in ['none', 'log10']
         assert len(x_filenames) == len(y_filenames)
+        assert isinstance(pad_size, int) or pad_size is None
         
         self.data_dir = data_dir
         self.x_filenames = x_filenames
@@ -34,6 +37,50 @@ class ResNetDataset(Dataset):
         self.imgs_per_file = imgs_per_file
         self.maxlen = maxlen
         self.normalization = normalization
+        self.pad_size = pad_size
+
+    def getx(self, file_number, idx_in_file):
+        """input image part of __getitem__"""
+        
+        with open(self.data_dir / Path(self.x_filenames[file_number]), 'rb') as f:
+            image_list = pickle.load(f)
+        x_numpy = image_list[idx_in_file]
+        x_unpadded = torch.from_numpy(x_numpy).float()
+        if self.pad_size is not None:
+            old_size = x_unpadded.shape[0]
+            size_diff = self.pad_size - old_size
+            padding = [size_diff//2, size_diff//2, size_diff//2 + size_diff%2, size_diff//2 + size_diff%2]
+            x_padded = pad(x_unpadded, padding)
+        else:
+            x_padded = x_unpadded
+            
+        if self.normalization == 'none':
+            x_tensor = x_padded
+        elif self.normalization == 'log10':
+            # The clamping is to make sure all the log values are well-defined,
+            # and not too extremely negative.
+            x_tensor = np.log10(torch.clamp(x_padded, 1e-6, None))
+        else:
+            raise ValueError('Unrecognized normalization')
+
+        # Then expand for 3x channels
+        x_tensor = x_tensor.expand(3, -1, -1)
+        return x_tensor
+
+    def gety(self, file_number, idx_in_file):
+        """output shear values part of __getitem__"""
+        
+        with open(self.data_dir / Path(self.y_filenames[file_number])) as f:
+            input_kwargs = csv.reader(f, delimiter=',')
+
+            kwargs_labels = next(input_kwargs)
+            kwarg_vals = [x for x in input_kwargs]
+
+        kwarg_val = kwarg_vals[idx_in_file]
+        gamma1_los = float(kwarg_val[13])
+        gamma2_los = float(kwarg_val[14])
+        y_tensor = torch.tensor([gamma1_los, gamma2_los])
+        return  y_tensor
         
     def __getitem__(self, index):
         # The current structure is that we have files of about 1000 images each,
@@ -45,43 +92,13 @@ class ResNetDataset(Dataset):
         file_number = index // self.imgs_per_file
         idx_in_file = index % self.imgs_per_file
 
-        with open(self.data_dir / Path(self.x_filenames[file_number]), 'rb') as f:
-            image_list = pickle.load(f)
-        x_numpy = image_list[idx_in_file]
-        x_unpadded = torch.from_numpy(x_numpy).float()
-        old_size = x_unpadded.shape[0]
-        new_size = 256 # round number near maximum size in all our data
-        size_diff = new_size - old_size
-        padding = [size_diff//2, size_diff//2, size_diff//2 + size_diff%2, size_diff//2 + size_diff%2]
-        if self.normalization == 'none':
-            x_tensor = pad(x_unpadded, padding)
-        elif self.normalization == 'log10':
-            # The clamping is to make sure all the log values are well-defined,
-            # and not too extremely negative.
-            x_tensor = np.log10(torch.clamp(pad(x_unpadded, padding), 1e-6, None))
-        else:
-            raise ValueError('Unrecognized normalization')
-
-        # Then expand for 3x channels
-        x_tensor = x_tensor.expand(3, -1, -1)
-
-
-        with open(self.data_dir / Path(self.y_filenames[file_number])) as f:
-            input_kwargs = csv.reader(f, delimiter=',')
-
-            kwargs_labels = next(input_kwargs)
-            kwarg_vals = [x for x in input_kwargs]
-
-        kwarg_val = kwarg_vals[idx_in_file]
-        gamma1_los = float(kwarg_val[1]) + float(kwarg_val[5]) - float(kwarg_val[9])
-        gamma2_los = float(kwarg_val[2]) + float(kwarg_val[6]) - float(kwarg_val[10])
-        y_tensor = torch.tensor([gamma1_los, gamma2_los])
-
+        x_tensor = self.getx(file_number, idx_in_file)
+        y_tensor = self.gety(file_number, idx_in_file)
         return x_tensor, y_tensor
 
     def __len__(self):
         return min(self.maxlen, self.imgs_per_file * len(self.x_filenames))
-    
+
 ## We will "define" our resnet in terms of the default torch `resnet18`
 ## implementation. But we want to be able to apply dropout to control
 ## overfitting, so we use the following function.
@@ -145,18 +162,19 @@ if __name__ == '__main__':
     model = custom_resnet(resnet34, 2, args.pdrop)
     
     data_dir = '/n/holyscratch01/dvorkin_lab/Users/atsang/elronddata/datasets'
-    xtrain_filenames = ['mlfodder_{}_image_list.pickle'.format(i) for i in range(100)]
-    ytrain_filenames = ['mlfodder_{}_input_kwargs.csv'.format(i) for i in range(100)]
-    xval_filenames = ['mlfodder_{}_image_list.pickle'.format(i) for i in range(100,101)]
-    yval_filenames = ['mlfodder_{}_input_kwargs.csv'.format(i) for i in range(100,101)]
+    xtrain_filenames = ['fixpix_{}_image_list.pickle'.format(i) for i in range(100)]
+    ytrain_filenames = ['fixpix_{}_input_kwargs.csv'.format(i) for i in range(100)]
+    xval_filenames = ['fixpix_{}_image_list.pickle'.format(i) for i in range(100,101)]
+    yval_filenames = ['fixpix_{}_input_kwargs.csv'.format(i) for i in range(100,101)]
     
-    train_dataset = ResNetDataset(data_dir, xtrain_filenames, ytrain_filenames, 1000, normalization='log10')
-    val_dataset = ResNetDataset(data_dir, xval_filenames, yval_filenames, 1000, normalization='log10')
+    train_dataset = ResNetDataset(data_dir, xtrain_filenames, ytrain_filenames, 1000, normalization='log10', pad_size=None)
+    val_dataset = ResNetDataset(data_dir, xval_filenames, yval_filenames, 1000, normalization='log10', pad_size=None)
 
     # regress1: 9 train files, 1 val
     # regress2: 100 train files, 1 val
     # regress3: Switching from resnet18 to resnet34
-    mname = 'regress3'
+    # regress4: Switching to fixed-size images (rather than padding)
+    mname = 'regress4'
     batch_size = args.batch
     num_workers = args.num_workers
     to_normalize = False
