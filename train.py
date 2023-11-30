@@ -146,10 +146,15 @@ def train(model, dataset_train_val, mname, batch_size, num_workers,
     # that starts where the checkpoint starts.
     if use_chk_file:
         chk_sampler_start = (checkpoint_batch_nr + 1) * batch_size # +1 to not redo checkpoint batch again after saving
-        chk_sampler = CheckpointSampler(train_dataset, chk_sampler_starts)
-        chk_loader = DataLoader(train_dataset, batch_size=batch_size, sampler=chk_sampler,
-                                num_workers=num_workers, pin_memory=pin_memory)
+        chk_dataset = Subset(train_dataset, range(chk_sampler_start, len(train_dataset)))
+        chk_loader = DataLoader(chk_dataset,
+                                batch_size=batch_size,
+                                num_workers=num_workers,
+                                pin_memory=pin_memory)
+        
+        ## chk_loader is just like train_loader, except it starts right after the checkpoint
 
+        
     ############################################################################
 
     ## Learning rate schedule (reduce learning rate by a factor of 10 every time we plateau for 5 epochs)
